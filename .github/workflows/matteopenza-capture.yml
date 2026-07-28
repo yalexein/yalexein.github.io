@@ -1,0 +1,71 @@
+name: Matteo Penza archival capture
+
+on:
+  push:
+    branches:
+      - matteopenza-archive-capture
+    paths:
+      - .github/workflows/matteopenza-capture.yml
+
+permissions:
+  contents: write
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout isolated branch
+        uses: actions/checkout@v4
+
+      - name: Mirror matteopenza.com
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf capture-output matteopenza-archive.zip capture-report.txt
+          mkdir -p capture-output
+          wget \
+            --mirror \
+            --page-requisites \
+            --convert-links \
+            --adjust-extension \
+            --no-parent \
+            --domains=matteopenza.com,www.matteopenza.com \
+            --span-hosts \
+            --execute robots=off \
+            --user-agent='Mozilla/5.0 (compatible; archival-copy/1.0)' \
+            --wait=0.1 \
+            --timeout=30 \
+            --tries=3 \
+            --directory-prefix=capture-output \
+            https://www.matteopenza.com/
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib
+          root = Path('capture-output')
+          files = sorted(p for p in root.rglob('*') if p.is_file())
+          total = sum(p.stat().st_size for p in files)
+          lines = [
+              'Matteo Penza archival capture',
+              f'files={len(files)}',
+              f'bytes={total}',
+              '',
+          ]
+          for p in files:
+              digest = hashlib.sha256(p.read_bytes()).hexdigest()
+              lines.append(f'{digest}  {p.as_posix()}')
+          Path('capture-report.txt').write_text('\n'.join(lines) + '\n', encoding='utf-8')
+          PY
+
+          zip -q -r -9 matteopenza-archive.zip capture-output capture-report.txt
+
+      - name: Commit capture result to isolated branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'archive-capture-bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add -f matteopenza-archive.zip capture-report.txt
+          git commit -m '[capture result] autonomous matteopenza mirror'
+          git push origin HEAD:matteopenza-archive-capture
